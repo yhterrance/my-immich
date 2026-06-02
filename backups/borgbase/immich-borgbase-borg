@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_FILE="${IMMICH_BORGBASE_CONFIG:-/etc/borgbase/immich.env}"
+
+if [[ ! -r "$CONFIG_FILE" ]]; then
+  echo "Missing readable config file: $CONFIG_FILE" >&2
+  exit 1
+fi
+
+# shellcheck source=/dev/null
+source "$CONFIG_FILE"
+
+: "${BORG_REPO:?BORG_REPO is required}"
+: "${BORG_KEY_FILE:=/root/.ssh/immich_borgbase}"
+: "${BORG_PASSPHRASE_FILE:=/etc/borgbase/immich-passphrase}"
+
+if [[ ! -r "$BORG_KEY_FILE" ]]; then
+  echo "Missing readable BorgBase SSH key: $BORG_KEY_FILE" >&2
+  exit 1
+fi
+
+if [[ ! -r "$BORG_PASSPHRASE_FILE" ]]; then
+  echo "Missing readable Borg passphrase file: $BORG_PASSPHRASE_FILE" >&2
+  exit 1
+fi
+
+export BORG_REPO
+export BORG_RSH="ssh -i ${BORG_KEY_FILE} -o IdentitiesOnly=yes"
+export BORG_PASSPHRASE
+BORG_PASSPHRASE="$(< "$BORG_PASSPHRASE_FILE")"
+
+exec borg "$@"

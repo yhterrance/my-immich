@@ -32,5 +32,6 @@ docker image prune
 
 ## Useful resources
 
+- [BorgBase backup runbook](backups/borgbase/README.md)
 - [Backup and Restore Immich](https://docs.immich.app/administration/backup-and-restore/)
 - [Simple and Secure Offsite Borg Backups](https://www.borgbase.com/)

@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+umask 077
+
+CONFIG_FILE="${IMMICH_BORGBASE_CONFIG:-/etc/borgbase/immich.env}"
+
+if [[ ! -r "$CONFIG_FILE" ]]; then
+  echo "Missing readable config file: $CONFIG_FILE" >&2
+  exit 1
+fi
+
+# shellcheck source=/dev/null
+source "$CONFIG_FILE"
+
+: "${UPLOAD_LOCATION:?UPLOAD_LOCATION is required}"
+: "${DB_CONTAINER:=immich_postgres}"
+: "${DB_USERNAME:=postgres}"
+: "${BORG_REPO:?BORG_REPO is required}"
+: "${BORG_KEY_FILE:=/root/.ssh/immich_borgbase}"
+: "${BORG_PASSPHRASE_FILE:=/etc/borgbase/immich-passphrase}"
+: "${BORG_KEEP_DAILY:=7}"
+: "${BORG_KEEP_WEEKLY:=4}"
+: "${BORG_KEEP_MONTHLY:=12}"
+: "${BORG_EXCLUDE_RELATIVE:=thumbs encoded-video}"
+
+if [[ ! -d "$UPLOAD_LOCATION" ]]; then
+  echo "UPLOAD_LOCATION does not exist: $UPLOAD_LOCATION" >&2
+  exit 1
+fi
+
+if [[ ! -r "$BORG_KEY_FILE" ]]; then
+  echo "Missing readable BorgBase SSH key: $BORG_KEY_FILE" >&2
+  exit 1
+fi
+
+if [[ ! -r "$BORG_PASSPHRASE_FILE" ]]; then
+  echo "Missing readable Borg passphrase file: $BORG_PASSPHRASE_FILE" >&2
+  exit 1
+fi
+
+export BORG_REPO
+export BORG_RSH="ssh -i ${BORG_KEY_FILE} -o IdentitiesOnly=yes"
+export BORG_PASSPHRASE
+BORG_PASSPHRASE="$(< "$BORG_PASSPHRASE_FILE")"
+
+if [[ -z "${LOCK_FILE:-}" ]]; then
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    LOCK_FILE="/var/lock/immich-borgbase-backup.lock"
+  else
+    LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/immich-borgbase-backup-${UID}.lock"
+  fi
+fi
+
+DB_BACKUP_DIR="$UPLOAD_LOCATION/database-backup"
+DB_DUMP_FILE="$DB_BACKUP_DIR/immich-database.sql"
+
+mkdir -p "$DB_BACKUP_DIR"
+
+(
+  flock -n 9 || {
+    echo "Another immich-borgbase backup is already running." >&2
+    exit 1
+  }
+
+  tmp_dump="$(mktemp "$DB_BACKUP_DIR/immich-database.sql.tmp.XXXXXX")"
+  cleanup() {
+    rm -f "$tmp_dump"
+  }
+  trap cleanup EXIT
+
+  docker exec -i "$DB_CONTAINER" pg_dumpall \
+    --clean --if-exists \
+    --username="$DB_USERNAME" \
+    > "$tmp_dump"
+
+  mv "$tmp_dump" "$DB_DUMP_FILE"
+  trap - EXIT
+
+  borg_excludes=()
+  for relative_path in $BORG_EXCLUDE_RELATIVE; do
+    borg_excludes+=(--exclude "$UPLOAD_LOCATION/$relative_path")
+  done
+
+  borg create \
+    --stats \
+    --compression auto,zstd \
+    "::immich-{now:%Y-%m-%dT%H:%M:%S}" \
+    "$UPLOAD_LOCATION" \
+    "${borg_excludes[@]}"
+
+  borg prune \
+    --keep-daily="$BORG_KEEP_DAILY" \
+    --keep-weekly="$BORG_KEEP_WEEKLY" \
+    --keep-monthly="$BORG_KEEP_MONTHLY"
+
+  borg compact
+) 9>"$LOCK_FILE"

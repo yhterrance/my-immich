@@ -6,29 +6,14 @@
 ### Update Immich
 
 ```bash
-# 1. Confirm a recent database backup exists.
-ls -lh library/backups | tail
-
-# 2. Check the target version.
-grep IMMICH_VERSION .env
-
-# 3. Edit .env if pinning a new version, for example:
-# IMMICH_VERSION=v2.3.1
-# Use IMMICH_VERSION=release for the latest stable release.
-
-# 4. Pull images and restart.
-docker compose pull
-docker compose up -d
-
-# 5. Confirm everything is healthy.
-docker compose ps
+# Confirm a recent database backup exists, then run:
+./upgrade-immich.sh
 ```
 
-After the update, open Immich and confirm the web app loads. If all looks good, optionally remove old unused images:
-
-```bash
-docker image prune
-```
+The script downloads Immich's current Compose file, keeps this host's
+localhost-only binding, saves the previous Compose file in `.upgrade-backups/`,
+pulls/recreates containers, and waits for health checks. It prompts for `sudo`
+when Docker access requires it.
 
 ## Useful resources
 
